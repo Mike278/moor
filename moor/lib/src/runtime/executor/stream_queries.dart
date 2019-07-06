@@ -62,24 +62,25 @@ class StreamKey {
 class StreamQueryStore {
   final List<QueryStream> _activeStreamsWithoutKey = [];
   final Map<StreamKey, QueryStream> _activeKeyStreams = {};
+  final StreamController<Set<String>> _tableChangeNotifier =
+      StreamController.broadcast();
 
   StreamQueryStore();
-
-  Iterable<QueryStream> get _activeStreams {
-    return _activeKeyStreams.values.followedBy(_activeStreamsWithoutKey);
-  }
 
   /// Creates a new stream from the select statement.
   Stream<T> registerStream<T>(QueryStreamFetcher<T> fetcher) {
     final key = fetcher.key;
+    final readsFrom = fetcher.readsFrom.map((t) => t.actualTableName).toSet();
+    final sourceTables = _tableChangeNotifier.stream
+        .where((tables) => tables.intersection(readsFrom).isNotEmpty);
 
     if (key == null) {
-      final stream = QueryStream(fetcher, this);
+      final stream = QueryStream(fetcher, this, sourceTables);
       _activeStreamsWithoutKey.add(stream);
       return stream.stream;
     } else {
       final stream = _activeKeyStreams.putIfAbsent(key, () {
-        return QueryStream<T>(fetcher, this);
+        return QueryStream<T>(fetcher, this, sourceTables);
       });
 
       return (stream as QueryStream<T>).stream;
@@ -89,18 +90,8 @@ class StreamQueryStore {
   /// Handles updates on a given table by re-executing all queries that read
   /// from that table.
   Future<void> handleTableUpdates(Set<TableInfo> tables) async {
-    final activeStreams = List<QueryStream>.from(_activeStreams);
     final updatedNames = tables.map((t) => t.actualTableName).toSet();
-
-    final affectedStreams = activeStreams.where((stream) {
-      return stream._fetcher.readsFrom.any((table) {
-        return updatedNames.contains(table.actualTableName);
-      });
-    });
-
-    for (var stream in affectedStreams) {
-      await stream.fetchAndEmitData();
-    }
+    _tableChangeNotifier.add(updatedNames);
   }
 
   void markAsClosed(QueryStream stream) {
@@ -116,9 +107,11 @@ class StreamQueryStore {
 class QueryStream<T> {
   final QueryStreamFetcher<T> _fetcher;
   final StreamQueryStore _store;
+  final Stream<Set<String>> _sourceTables;
 
   StreamController<T> _controller;
 
+  StreamSubscription<void> _tableChangeSub;
   T _lastData;
 
   Stream<T> get stream {
@@ -130,30 +123,51 @@ class QueryStream<T> {
     return _controller.stream.transform(StartWithValueTransformer(_cachedData));
   }
 
-  QueryStream(this._fetcher, this._store);
+  QueryStream(this._fetcher, this._store, this._sourceTables);
 
   /// Called when we have a new listener, makes the stream query behave similar
   /// to an `BehaviorSubject` from rxdart.
   T _cachedData() => _lastData;
 
   void _onListen() {
-    // first listener added, fetch query
-    fetchAndEmitData();
+    // First listener added.
+    // Start listening for table changes and re-run the query.
+    _listenToSourceTables();
+    _fetchAndEmitData();
   }
 
   void _onCancel() {
-    // last listener gone, dispose
-    _controller.close();
     // todo this removes the stream from the list so that it can be garbage
     // collected. When a stream is never listened to, we have a memory leak as
     // this will never be called. Maybe an Expando (which uses weak references)
     // can save us here?
     _store.markAsClosed(this);
+
+    // Stop listening for table updates
+    _tableChangeSub?.cancel();
+    _tableChangeSub = null;
+
+    // Even though we've removed from the store and there are no current
+    // listeners, someone might still be holding a reference to this QueryStream
+    // so don't close the controller.
+    // Instead, set the most recent value to null so that new listeners don't
+    // get a stale value while waiting for _fetchAndEmitData to return.
+    _lastData = null;
   }
 
-  Future<void> fetchAndEmitData() async {
-    // Fetch data if it's needed, publish that data if it's possible.
-    if (!_controller.hasListener) return;
+  void _listenToSourceTables() {
+    _tableChangeSub ??=
+      _sourceTables.listen((_) => _fetchAndEmitData());
+  }
+
+  Future<void> _fetchAndEmitData() async {
+    // We should always have a listener when this is called since we
+    // unsubscribe from _sourceTables when there are no more listeners,
+    // but _onCancel() just in case to prevent stale data.
+    if (!_controller.hasListener) {
+      _onCancel();
+      return;
+    }
 
     final data = await _fetcher.fetchData();
     _lastData = data;
