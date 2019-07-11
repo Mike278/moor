@@ -405,16 +405,21 @@ class Parser {
   Limit _limit() {
     if (!_matchOne(TokenType.limit)) return null;
 
-    final count = expression();
-    Token offsetSep;
-    Expression offset;
+    // Unintuitive, it's "$amount OFFSET $offset", but "$offset, $amount"
+    // the order changes between the separator tokens.
+    final first = expression();
 
-    if (_match(const [TokenType.comma, TokenType.offset])) {
-      offsetSep = _previous;
-      offset = expression();
+    if (_matchOne(TokenType.comma)) {
+      final separator = _previous;
+      final count = expression();
+      return Limit(count: count, offsetSeparator: separator, offset: first);
+    } else if (_matchOne(TokenType.offset)) {
+      final separator = _previous;
+      final offset = expression();
+      return Limit(count: first, offsetSeparator: separator, offset: offset);
+    } else {
+      return Limit(count: first);
     }
-
-    return Limit(count: count, offsetSeparator: offsetSep, offset: offset);
   }
 
   DeleteStatement _deleteStmt() {
@@ -638,7 +643,7 @@ class Parser {
       TokenType.minus,
       TokenType.plus,
       TokenType.tilde,
-      TokenType.not
+      TokenType.not,
     ])) {
       final operator = _previous;
       final expression = _unary();
@@ -659,7 +664,21 @@ class Parser {
     // todo parse ISNULL, NOTNULL, NOT NULL, etc.
     // I don't even know the precedence ¯\_(ツ)_/¯ (probably not higher than
     // unary)
-    return _primary();
+    var expression = _primary();
+
+    while (_matchOne(TokenType.collate)) {
+      final collateOp = _previous;
+      final collateFun =
+          _consume(TokenType.identifier, 'Expected a collating sequence')
+              as IdentifierToken;
+      expression = CollateExpression(
+        inner: expression,
+        operator: collateOp,
+        collateFunction: collateFun,
+      )..setSpan(expression.first, collateFun);
+    }
+
+    return expression;
   }
 
   Expression _primary() {

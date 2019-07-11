@@ -1199,7 +1199,8 @@ abstract class _$TodoDb extends GeneratedDatabase {
   }
 
   Future<List<AllTodosWithCategoryResult>> allTodosWithCategory(
-      {QueryEngine operateOn}) {
+      {@Deprecated('No longer needed with Moor 1.6 - see the changelog for details')
+          QueryEngine operateOn}) {
     return (operateOn ?? this).customSelect(
         'SELECT t.*, c.id as catId, c."desc" as catDesc FROM todos t INNER JOIN categories c ON c.id = t.category',
         variables: []).then((rows) => rows.map(_rowToAllTodosWithCategoryResult).toList());
@@ -1215,13 +1216,80 @@ abstract class _$TodoDb extends GeneratedDatabase {
         }).map((rows) => rows.map(_rowToAllTodosWithCategoryResult).toList());
   }
 
-  Future<int> deleteTodoById(int var1, {QueryEngine operateOn}) {
-    return (operateOn ?? this)
-        .customUpdate('DELETE FROM todos WHERE id = ?', variables: [
-      Variable.withInt(var1),
-    ], updates: {
-      todosTable
-    });
+  Future<int> deleteTodoById(
+      int var1,
+      {@Deprecated('No longer needed with Moor 1.6 - see the changelog for details')
+          QueryEngine operateOn}) {
+    return (operateOn ?? this).customUpdate(
+      'DELETE FROM todos WHERE id = ?',
+      variables: [
+        Variable.withInt(var1),
+      ],
+      updates: {todosTable},
+    );
+  }
+
+  TodoEntry _rowToTodoEntry(QueryRow row) {
+    return TodoEntry(
+      id: row.readInt('id'),
+      title: row.readString('title'),
+      content: row.readString('content'),
+      targetDate: row.readDateTime('target_date'),
+      category: row.readInt('category'),
+    );
+  }
+
+  Future<List<TodoEntry>> withIn(
+      String var1,
+      String var2,
+      List<int> var3,
+      {@Deprecated('No longer needed with Moor 1.6 - see the changelog for details')
+          QueryEngine operateOn}) {
+    final expandedvar3 = List.filled(var3.length, '?').join(',');
+    return (operateOn ?? this).customSelect(
+        'SELECT * FROM todos WHERE title = ?2 OR id IN ($expandedvar3) OR title = ?1',
+        variables: [
+          Variable.withString(var1),
+          Variable.withString(var2),
+          for (var $ in var3) Variable.withInt($),
+        ]).then((rows) => rows.map(_rowToTodoEntry).toList());
+  }
+
+  Stream<List<TodoEntry>> watchWithIn(
+      String var1, String var2, List<int> var3) {
+    final expandedvar3 = List.filled(var3.length, '?').join(',');
+    return customSelectStream(
+        'SELECT * FROM todos WHERE title = ?2 OR id IN ($expandedvar3) OR title = ?1',
+        variables: [
+          Variable.withString(var1),
+          Variable.withString(var2),
+          for (var $ in var3) Variable.withInt($),
+        ],
+        readsFrom: {
+          todosTable
+        }).map((rows) => rows.map(_rowToTodoEntry).toList());
+  }
+
+  Future<List<TodoEntry>> search(
+      int id,
+      {@Deprecated('No longer needed with Moor 1.6 - see the changelog for details')
+          QueryEngine operateOn}) {
+    return (operateOn ?? this).customSelect(
+        'SELECT * FROM todos WHERE CASE WHEN -1 = :id THEN 1 ELSE id = :id END',
+        variables: [
+          Variable.withInt(id),
+        ]).then((rows) => rows.map(_rowToTodoEntry).toList());
+  }
+
+  Stream<List<TodoEntry>> watchSearch(int id) {
+    return customSelectStream(
+        'SELECT * FROM todos WHERE CASE WHEN -1 = :id THEN 1 ELSE id = :id END',
+        variables: [
+          Variable.withInt(id),
+        ],
+        readsFrom: {
+          todosTable
+        }).map((rows) => rows.map(_rowToTodoEntry).toList());
   }
 
   @override
@@ -1253,7 +1321,10 @@ mixin _$SomeDaoMixin on DatabaseAccessor<TodoDb> {
     );
   }
 
-  Future<List<TodoEntry>> todosForUser(int user, {QueryEngine operateOn}) {
+  Future<List<TodoEntry>> todosForUser(
+      int user,
+      {@Deprecated('No longer needed with Moor 1.6 - see the changelog for details')
+          QueryEngine operateOn}) {
     return (operateOn ?? this).customSelect(
         'SELECT t.* FROM todos t INNER JOIN shared_todos st ON st.todo = t.id INNER JOIN users u ON u.id = st.user WHERE u.id = :user',
         variables: [
